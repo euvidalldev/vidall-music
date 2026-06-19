@@ -1,0 +1,6 @@
+{
+  "name": "SonicSnap",
+  "description": "Aplicativo para baixar músicas por link do YouTube com fila de download inteligente, reprodutor offline integrado e design refinado Sophisticated Dark.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
