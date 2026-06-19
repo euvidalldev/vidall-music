@@ -1556,16 +1556,12 @@ fun VideoPlayerDialog(
 /**
  * Configuration dialog for custom Cobalt instance URL and API Key
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsDialog(
     viewModel: MainViewModel,
     onDismiss: () -> Unit
 ) {
     var instanceUrl by remember { mutableStateOf(viewModel.getCustomInstanceUrl() ?: "") }
-    var apiKey by remember { mutableStateOf(viewModel.getApiKey() ?: "") }
-    var authScheme by remember { mutableStateOf(viewModel.getAuthScheme() ?: "Api-Key") }
-    var expandedScheme by remember { mutableStateOf(false) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -1580,89 +1576,26 @@ fun SettingsDialog(
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Text(
-                    "Configurações da Instância",
+                    "Configurações do Servidor",
                     color = TextWhite,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Black
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    "Configure uma instância Cobalt customizada e chave de API",
+                    "Configure uma instância Piped API customizada (padrão: pipedapi.kavin.rocks)",
                     color = TextGray,
                     fontSize = 12.sp
                 )
 
                 Spacer(modifier = Modifier.height(20.dp))
 
-                Text("URL da Instância", color = AmberPrimary, fontSize = 11.sp, fontWeight = FontWeight.Black)
+                Text("URL da Instância Piped", color = AmberPrimary, fontSize = 11.sp, fontWeight = FontWeight.Black)
                 Spacer(modifier = Modifier.height(6.dp))
                 OutlinedTextField(
                     value = instanceUrl,
                     onValueChange = { instanceUrl = it },
-                    placeholder = { Text("https://seuservidor.com/", color = TextGray) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = TextWhite,
-                        unfocusedTextColor = TextWhite,
-                        focusedBorderColor = AmberPrimary,
-                        unfocusedBorderColor = CharcoalLight,
-                        focusedContainerColor = Color.Black,
-                        unfocusedContainerColor = Color.Black
-                    ),
-                    shape = RoundedCornerShape(10.dp)
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Text("Esquema de Autenticação", color = AmberPrimary, fontSize = 11.sp, fontWeight = FontWeight.Black)
-                Spacer(modifier = Modifier.height(6.dp))
-                ExposedDropdownMenuBox(
-                    expanded = expandedScheme,
-                    onExpandedChange = { expandedScheme = !expandedScheme }
-                ) {
-                    OutlinedButton(
-                        onClick = { expandedScheme = true },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .menuAnchor(),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextWhite),
-                        shape = RoundedCornerShape(8.dp),
-                        border = BorderStroke(1.dp, CharcoalLight)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(text = authScheme, fontSize = 13.sp)
-                            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
-                        }
-                    }
-                    DropdownMenu(
-                        expanded = expandedScheme,
-                        onDismissRequest = { expandedScheme = false },
-                        modifier = Modifier.background(CharcoalCard)
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Api-Key", color = TextWhite) },
-                            onClick = { authScheme = "Api-Key"; expandedScheme = false }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Bearer", color = TextWhite) },
-                            onClick = { authScheme = "Bearer"; expandedScheme = false }
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Text("Chave de API", color = AmberPrimary, fontSize = 11.sp, fontWeight = FontWeight.Black)
-                Spacer(modifier = Modifier.height(6.dp))
-                OutlinedTextField(
-                    value = apiKey,
-                    onValueChange = { apiKey = it },
-                    placeholder = { Text("sua-chave-api-aqui", color = TextGray) },
+                    placeholder = { Text("https://pipedapi.kavin.rocks", color = TextGray) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
@@ -1685,9 +1618,7 @@ fun SettingsDialog(
                     OutlinedButton(
                         onClick = {
                             instanceUrl = ""
-                            apiKey = ""
                             viewModel.setCustomInstanceUrl(null)
-                            viewModel.setApiKey(null)
                             onDismiss()
                         },
                         modifier = Modifier.weight(1f),
@@ -1700,8 +1631,6 @@ fun SettingsDialog(
                     Button(
                         onClick = {
                             viewModel.setCustomInstanceUrl(instanceUrl.ifBlank { null })
-                            viewModel.setApiKey(apiKey.ifBlank { null })
-                            viewModel.setAuthScheme(authScheme)
                             onDismiss()
                         },
                         modifier = Modifier.weight(1f),

@@ -3,32 +3,21 @@ package com.example.data
 import android.util.Log
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
+import java.util.regex.Pattern
 
 object CobaltClient {
-    private const val TAG = "CobaltClient"
+    private const val TAG = "MediaResolver"
 
-    // Default public instances as fallback
-    // Note: v7 API (api/json) shut down Nov 2024. Now using POST / (root path).
-    private val DEFAULT_ENDPOINTS = listOf(
-        "https://api.cobalt.tools/",
-        "https://co.wuk.sh/",
-        "https://cobalt.api.ryder.rip/"
-    )
+    private val DEFAULT_PIPED_INSTANCE = "https://pipedapi.kavin.rocks"
 
-    private fun getEndpoints(): List<String> {
-        val customUrl = InstanceConfig.customInstanceUrl
-        return if (!customUrl.isNullOrBlank()) {
-            listOf(customUrl.trimEnd('/') + "/")
-        } else {
-            DEFAULT_ENDPOINTS
-        }
+    private fun getBaseUrl(): String {
+        val custom = InstanceConfig.customInstanceUrl
+        return if (!custom.isNullOrBlank()) custom.trimEnd('/') else DEFAULT_PIPED_INSTANCE
     }
 
     private val client = OkHttpClient.Builder()
@@ -41,105 +30,172 @@ object CobaltClient {
         .add(KotlinJsonAdapterFactory())
         .build()
 
-    private val responseAdapter = moshi.adapter(CobaltResponse::class.java)
-
-    data class CobaltRequest(
-        val url: String,
-        val downloadMode: String, // "audio" or "video"
-        val audioFormat: String = "mp3", // "mp3" or "best"
-        val videoQuality: String = "720", // "720" or "1080"
-        val filenameStyle: String = "classic"
-    )
-
-    data class CobaltError(
-        val code: String? = null,
-        val context: Map<String, Any>? = null
-    )
-
     data class CobaltResponse(
-        val status: String, // "tunnel", "redirect", "picker", "error", "local-processing"
+        val status: String,
         val url: String? = null,
         val filename: String? = null,
-        val text: String? = null, // legacy error message
-        val error: CobaltError? = null // error object (v8+)
+        val text: String? = null
     ) {
-        val errorMessage: String?
-            get() = text ?: error?.code
+        val errorMessage: String? get() = text
     }
 
-    /**
-     * Resolves the media download link using Cobalt API endpoints with automatic fallback.
-     */
+    data class PipedStream(
+        val url: String? = null,
+        val format: String? = null,
+        val quality: String? = null,
+        val mimeType: String? = null,
+        val videoOnly: Boolean? = null
+    )
+
+    data class PipedStreamsResponse(
+        val title: String? = null,
+        val thumbnailUrl: String? = null,
+        val duration: Long? = null,
+        val audioStreams: List<PipedStream>? = null,
+        val videoStreams: List<PipedStream>? = null,
+        val error: String? = null
+    )
+
+    fun extractYoutubeVideoId(url: String): String? {
+        val patterns = listOf(
+            "v=([a-zA-Z0-9_-]{11})",
+            "youtu\\.be/([a-zA-Z0-9_-]{11})",
+            "shorts/([a-zA-Z0-9_-]{11})",
+            "embed/([a-zA-Z0-9_-]{11})",
+            "live/([a-zA-Z0-9_-]{11})"
+        )
+        for (pattern in patterns) {
+            val matcher = Pattern.compile(pattern).matcher(url)
+            if (matcher.find()) return matcher.group(1)
+        }
+        return null
+    }
+
     suspend fun resolveUrl(
         inputUrl: String,
         isAudioOnly: Boolean,
         format: String = "mp3",
         quality: String = "720"
     ): CobaltResponse = withContext(Dispatchers.IO) {
-        val requestBodyMap = mapOf(
-            "url" to inputUrl,
-            "downloadMode" to (if (isAudioOnly) "audio" else "auto"),
-            "audioFormat" to format,
-            "videoQuality" to quality,
-            "filenameStyle" to "classic"
-        )
-        
-        val requestJson = moshi.adapter(Map::class.java).toJson(requestBodyMap)
-        val mediaType = "application/json; charset=utf-8".toMediaType()
-        val body = requestJson.toRequestBody(mediaType)
-
-        var lastException: Exception? = null
-
-        val endpoints = getEndpoints()
-
-        for (endpoint in endpoints) {
-            try {
-                Log.d(TAG, "Attempting to resolve URL on: $endpoint")
-                val requestBuilder = Request.Builder()
-                    .url(endpoint)
-                    .post(body)
-                    .addHeader("Accept", "application/json")
-                    .addHeader("Content-Type", "application/json")
-
-                // Add auth header if configured
-                val scheme = InstanceConfig.authScheme
-                val key = InstanceConfig.apiKey
-                if (!scheme.isNullOrBlank() && !key.isNullOrBlank()) {
-                    requestBuilder.addHeader("Authorization", "$scheme $key")
-                }
-
-                val request = requestBuilder.build()
-
-                client.newCall(request).execute().use { response ->
-                    val responseBodyString = response.body?.string()
-                    Log.d(TAG, "Cobalt Response Code: ${response.code}, Body: $responseBodyString")
-
-                    if (response.isSuccessful && responseBodyString != null) {
-                        val resolved = responseAdapter.fromJson(responseBodyString)
-                        if (resolved != null) {
-                            if (resolved.status == "error") {
-                                Log.e(TAG, "Cobalt returned error: ${resolved.errorMessage}")
-                                return@withContext resolved
-                            }
-                            return@withContext resolved
-                        }
-                    } else if (response.code == 400 || response.code == 422) {
-                        if (responseBodyString != null) {
-                            val resolved = responseAdapter.fromJson(responseBodyString)
-                            if (resolved != null) return@withContext resolved
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Filed resolving with $endpoint: ${e.message}", e)
-                lastException = e
-            }
+        // First try Piped API
+        val videoId = extractYoutubeVideoId(inputUrl)
+        if (videoId != null) {
+            val pipedResult = resolveViaPiped(videoId, isAudioOnly, quality)
+            if (pipedResult != null) return@withContext pipedResult
+        } else {
+            return@withContext CobaltResponse(
+                status = "error",
+                text = "URL do YouTube inválida. Use um link do tipo youtube.com/watch?v=..."
+            )
         }
 
-        // If we reach here, all instances failed
+        // If no custom instance configured and Piped failed, return error
+        val customUrl = InstanceConfig.customInstanceUrl
+        if (customUrl.isNullOrBlank()) {
+            return@withContext CobaltResponse(
+                status = "error",
+                text = "Não foi possível processar o vídeo. A instância Piped pode estar temporariamente indisponível."
+            )
+        }
+
         return@withContext CobaltResponse(
             status = "error",
-            text = "Não foi possível conectar aos servidores de download. Erro: ${lastException?.localizedMessage ?: "Conexão perdida"}"
+            text = "Todas as tentativas de resolução falharam."
         )
+    }
+
+    private suspend fun resolveViaPiped(
+        videoId: String,
+        isAudioOnly: Boolean,
+        quality: String
+    ): CobaltResponse? {
+        val baseUrl = getBaseUrl()
+        val apiUrl = "$baseUrl/streams/$videoId"
+
+        return try {
+            Log.d(TAG, "Fetching streams from Piped API: $apiUrl")
+            val request = Request.Builder()
+                .url(apiUrl)
+                .addHeader("Accept", "application/json")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                val body = response.body?.string()
+                Log.d(TAG, "Piped Response Code: ${response.code}")
+
+                if (!response.isSuccessful || body == null) {
+                    Log.e(TAG, "Piped API error: ${response.code}")
+                    return null
+                }
+
+                val adapter = moshi.adapter(PipedStreamsResponse::class.java)
+                val streams = adapter.fromJson(body)
+
+                if (streams == null) {
+                    Log.e(TAG, "Failed to parse Piped response")
+                    return null
+                }
+
+                if (streams.error != null) {
+                    Log.e(TAG, "Piped returned error: ${streams.error}")
+                    return null
+                }
+
+                val title = streams.title ?: "Video_${videoId}"
+
+                if (isAudioOnly) {
+                    val audioStreams = streams.audioStreams
+                    if (audioStreams.isNullOrEmpty()) {
+                        Log.e(TAG, "No audio streams available")
+                        return null
+                    }
+                    val bestAudio = audioStreams.maxByOrNull {
+                        parseBitrate(it.quality ?: "0")
+                    }
+                    val streamUrl = bestAudio?.url
+                    if (streamUrl.isNullOrBlank()) return null
+                    val ext = bestAudio.format ?: "webm"
+                    return CobaltResponse(
+                        status = "redirect",
+                        url = streamUrl,
+                        filename = "$title.$ext"
+                    )
+                } else {
+                    val videoStreams = streams.videoStreams
+                    if (videoStreams.isNullOrEmpty()) {
+                        Log.e(TAG, "No video streams available")
+                        return null
+                    }
+                    val targetQuality = quality.toIntOrNull() ?: 720
+                    val bestVideo = videoStreams
+                        .filter { it.videoOnly != true }
+                        .minByOrNull {
+                            val q = it.quality?.filter { c -> c.isDigit() || c == 'p' }
+                                ?.replace("p", "")?.toIntOrNull() ?: 0
+                            Math.abs(q - targetQuality)
+                        } ?: videoStreams.firstOrNull { it.videoOnly != true }
+                    val streamUrl = bestVideo?.url
+                    if (streamUrl.isNullOrBlank()) return null
+                    val ext = when {
+                        bestVideo.mimeType?.contains("mp4") == true -> "mp4"
+                        bestVideo.mimeType?.contains("webm") == true -> "webm"
+                        else -> "mp4"
+                    }
+                    return CobaltResponse(
+                        status = "redirect",
+                        url = streamUrl,
+                        filename = "$title.$ext"
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Piped request failed: ${e.message}", e)
+            null
+        }
+    }
+
+    private fun parseBitrate(quality: String): Int {
+        val digits = quality.filter { it.isDigit() }
+        return digits.toIntOrNull() ?: 0
     }
 }
